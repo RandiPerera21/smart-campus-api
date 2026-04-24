@@ -97,15 +97,17 @@ curl -X POST http://localhost:8080/smart-campus-api/api/v1/sensors \
 
 ### Part 1.1 — JAX-RS Resource Lifecycle
 
-By default, JAX-RS creates a **new instance of each resource class for every incoming HTTP request** (per-request lifecycle). This means resource classes are stateless by design and must never store shared data in instance fields.
+By default, JAX-RS creates a **new instance of each resource class for every incoming HTTP request** (per-request lifecycle). This means resource classes are stateless by design and should not store shared data in instance fields.
 
 This architectural decision directly impacts how in-memory data is managed: because each request gets its own resource object, any data stored as an instance variable would be lost the moment the request ends. To share state across requests, all rooms, sensors, and readings are stored in **static `ConcurrentHashMap` fields** inside `DataStore`. `ConcurrentHashMap` is essential because multiple requests can execute concurrently, and a standard `HashMap` would suffer race conditions (lost updates, corrupted entries). `ConcurrentHashMap` provides thread-safe read and write operations without requiring explicit `synchronized` blocks.
+Additionally, although JAX-RS supports a singleton lifecycle if explicitly configured, the default behavior remains per-request to ensure safer concurrent request handling.
 
 ---
 
 ### Part 1.2 — HATEOAS
 
 **Hypermedia as the Engine of Application State (HATEOAS)** means that API responses include links to related resources and available actions, rather than forcing clients to construct URLs from documentation.
+For example, a response for a room resource may include links such as "self", "sensors", and "delete", allowing clients to directly navigate or perform actions without constructing URLs manually.
 
 Benefits over static documentation:
 - Clients can **navigate the API dynamically** without hard-coding paths. If a URI changes, clients following links adapt automatically.
@@ -140,7 +142,7 @@ The server state is identical after both calls (the room is gone), so idempotenc
 
 ### Part 3.1 — @Consumes and Content-Type Mismatch
 
-`@Consumes(MediaType.APPLICATION_JSON)` declares that the endpoint only accepts `application/json` request bodies. If a client sends `Content-Type: text/plain` or `application/xml`, JAX-RS automatically returns **HTTP 415 Unsupported Media Type** without ever invoking the resource method. The body is not parsed and the business logic is never reached. This protects the endpoint from malformed or unexpected data formats at the framework level.
+`@Consumes(MediaType.APPLICATION_JSON)` declares that the endpoint only accepts `application/json` request bodies. If a client sends `Content-Type: text/plain` or `application/xml`, JAX-RS automatically returns **HTTP 415 Unsupported Media Type** without ever invoking the resource method. The body is not parsed and the business logic is never reached. This protects the endpoint from malformed or unexpected data formats at the framework level. This validation occurs at the JAX-RS runtime level before the resource method is invoked, ensuring that invalid requests are rejected early.
 
 ---
 
@@ -166,7 +168,7 @@ The sub-resource locator pattern (returning an instance of another class rather 
 - **Separation of concerns**: `SensorResource` manages sensor CRUD; `SensorReadingResource` manages reading history. Each class has one responsibility and is independently testable.
 - **Avoids "God controller" classes**: without delegation, a single class would handle sensors, readings, filtering, error cases, and sub-paths — growing unmaintainably large.
 - **Reusability**: `SensorReadingResource` could be reused or extended independently without modifying `SensorResource`.
-- **Clarity**: developers reading the code immediately know which class handles which path segment, making onboarding and debugging faster.
+- **Clarity**: developers reading the code immediately know which class handles which path segment, making onboarding and debugging faster. This approach also improves scalability, as new nested resources can be added without increasing the complexity of existing resource classes.
 
 ---
 
